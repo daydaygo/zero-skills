@@ -235,8 +235,8 @@ See [getting-started/claude-code-guide.md](getting-started/claude-code-guide.md)
 
 ## 📝 Version Compatibility
 
-- **Target version**: go-zero 1.5+
-- **Go version**: Go 1.19 or later recommended
+- **Stable target**: go-zero v1.10.3 (Go 1.24 or later required)
+- **Master compatibility**: Use Go 1.25 or later when testing against the go-zero `master` branch
 - **Updates**: Patterns updated regularly to reflect framework evolution
 - **Breaking changes**: Check official docs for API changes between versions
 
