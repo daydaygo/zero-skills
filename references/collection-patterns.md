@@ -1,61 +1,61 @@
 # Collection Patterns
 
-go-zero 的 `core/collection` 包提供了一系列经过生产环境验证的高性能数据结构。
+go-zero's `core/collection` package provides a set of production-proven, high-performance data structures.
 
-## 概述
+## Overview
 
-| 数据结构 | 用途 | 时间复杂度 |
+| Data Structure | Purpose | Time Complexity |
 |---------|------|-----------|
-| LRU Cache | 本地缓存热点数据 | O(1) 查找/更新 |
-| Ring Buffer | 固定大小的循环缓冲区 | O(1) 添加/读取 |
-| TimingWheel | 高效定时器管理 | O(1) 添加/删除/执行 |
-| SafeMap | 并发安全的通用 Map | O(1) 查找/更新/删除 |
+| LRU Cache | Cache frequently accessed data locally | O(1) lookup/update |
+| Ring Buffer | Fixed-size circular buffer | O(1) add/read |
+| TimingWheel | Efficient timer management | O(1) add/remove/execute |
+| SafeMap | General-purpose concurrent map | O(1) lookup/update/delete |
 
 ---
 
 ## LRU Cache
 
-LRU（Least Recently Used）缓存淘汰策略：当缓存满时，优先淘汰最久未使用的数据。
+LRU (Least Recently Used) evicts the data that has gone unused the longest when the cache is full.
 
-### ✅ 基本使用
+### ✅ Basic Usage
 
 ```go
 import "github.com/zeromicro/go-zero/core/collection"
 
-// 创建容量为 100 的缓存
+// Create a cache with a capacity of 100.
 cache, err := collection.NewCache(100)
 if err != nil {
     log.Fatal(err)
 }
 
-// 设置值
+// Set a value.
 cache.Set("user:1", userData)
 
-// 获取值
+// Get a value.
 if val, ok := cache.Get("user:1"); ok {
     user := val.(*User)
 }
 
-// 删除值
+// Delete a value.
 cache.Del("user:1")
 
-// 获取缓存大小
+// Get the cache size.
 size := cache.Size()
 ```
 
-### ✅ 带淘汰回调
+### ✅ With an Eviction Callback
 
 ```go
 cache, err := collection.NewCache(100, collection.WithEvict(func(key string, value interface{}) {
-    // 清理资源
+    // Clean up resources.
     if closer, ok := value.(io.Closer); ok {
         closer.Close()
     }
-    log.Printf("淘汰: %s", key)
+    log.Printf("evicted: %s", key)
 }))
 ```
 
-### ✅ 在 ServiceContext 中使用
+### ✅ Using It in ServiceContext
 
 ```go
 type ServiceContext struct {
@@ -77,13 +77,13 @@ func NewServiceContext(c config.Config) *ServiceContext {
 }
 ```
 
-### ✅ Logic 层使用缓存
+### ✅ Using the Cache in the Logic Layer
 
 ```go
 func (l *GetUserLogic) GetUser(req *types.GetUserRequest) (*types.GetUserResponse, error) {
     cacheKey := fmt.Sprintf("user:%d", req.Id)
 
-    // 先查本地缓存
+    // Check the local cache first.
     if val, ok := l.svcCtx.UserCache.Get(cacheKey); ok {
         user := val.(*model.Users)
         return &types.GetUserResponse{
@@ -93,13 +93,13 @@ func (l *GetUserLogic) GetUser(req *types.GetUserRequest) (*types.GetUserRespons
         }, nil
     }
 
-    // 本地缓存未命中，查数据库
+    // On a local cache miss, query the database.
     user, err := l.svcCtx.UsersModel.FindOne(l.ctx, req.Id)
     if err != nil {
         return nil, err
     }
 
-    // 写入本地缓存
+    // Populate the local cache.
     l.svcCtx.UserCache.Set(cacheKey, user)
 
     return &types.GetUserResponse{
@@ -110,53 +110,53 @@ func (l *GetUserLogic) GetUser(req *types.GetUserRequest) (*types.GetUserRespons
 }
 ```
 
-### ❌ 常见错误
+### ❌ Common Mistakes
 
 ```go
-// 错误：缓存容量过大导致内存溢出
-cache, _ := collection.NewCache(10000000)  // 太大！
+// Wrong: an excessively large capacity can exhaust memory.
+cache, _ := collection.NewCache(10000000)  // Too large!
 
-// 错误：缓存持有资源但不清理
-cache.Set("conn", dbConn)  // 连接被缓存，无法释放
+// Wrong: the cache retains a resource without cleaning it up.
+cache.Set("conn", dbConn)  // The cached connection cannot be released.
 
-// 错误：缓存键冲突
+// Wrong: cache key collision.
 cache.Set("user", userA)
-cache.Set("user", userB)  // 覆盖了 userA
+cache.Set("user", userB)  // Overwrites userA.
 ```
 
-### 最佳实践
+### Best Practices
 
-- 根据内存和命中率设置合理的缓存大小
-- 淘汰回调中的耗时操作应异步执行
-- 使用有意义的键名避免冲突
-- 缓存的对象应尽量小且不可变
+- Choose a sensible cache size based on available memory and the expected hit rate.
+- Run expensive eviction-callback work asynchronously.
+- Use meaningful key names to avoid collisions.
+- Keep cached objects small and immutable when possible.
 
 ---
 
 ## Ring Buffer
 
-环形队列是一种固定大小的队列，新元素会覆盖最旧的元素。
+A ring buffer is a fixed-size queue in which new elements overwrite the oldest elements.
 
-### ✅ 基本使用
+### ✅ Basic Usage
 
 ```go
 import "github.com/zeromicro/go-zero/core/collection"
 
-// 创建保留最近 100 条记录的环形队列
+// Create a ring buffer that retains the 100 most recent records.
 ring := collection.NewRing(100)
 
-// 添加元素
+// Add elements.
 ring.Add(logEntry1)
 ring.Add(logEntry2)
 
-// 获取所有元素
+// Get all elements.
 items := ring.Take()
 for _, item := range items {
     log.Printf("%v", item)
 }
 ```
 
-### ✅ 日志缓冲区模式
+### ✅ Log Buffer Pattern
 
 ```go
 type LogBuffer struct {
@@ -189,7 +189,7 @@ func (lb *LogBuffer) GetRecentLogs() []LogEntry {
 }
 ```
 
-### ✅ 固定窗口统计
+### ✅ Fixed-Window Metrics
 
 ```go
 type MetricsCollector struct {
@@ -220,71 +220,72 @@ func (mc *MetricsCollector) GetAverageRequestTime() time.Duration {
 }
 ```
 
-### ❌ 常见错误
+### ❌ Common Mistakes
 
 ```go
-// 错误：大小过大浪费内存
-ring := collection.NewRing(1000000)  // 太大！
+// Wrong: an excessive size wastes memory.
+ring := collection.NewRing(1000000)  // Too large!
 
-// 错误：存储大对象占用过多内存
-ring.Add(largeFileContent)  // 不应该存储大对象
+// Wrong: storing large objects consumes too much memory.
+ring.Add(largeFileContent)  // Do not store large objects.
 
-// 错误：假设元素顺序
+// Wrong: assuming the wrong element order.
 items := ring.Take()
-// 注意：元素顺序是从最旧到最新，不是反过来的
+// Elements are ordered from oldest to newest, not the reverse.
 ```
 
-### 最佳实践
+### Best Practices
 
-- 根据数据量设置合理大小
-- 存储轻量级对象或引用
-- 配合定时读取使用，避免数据堆积
-- 需要顺序保证时使用额外的索引
+- Choose a sensible size based on the data volume.
+- Store lightweight objects or references.
+- Read periodically to prevent data from accumulating.
+- Use an additional index when strict ordering guarantees are required.
 
 ---
 
 ## TimingWheel
 
-时间轮是一种高效的定时器实现，适合管理大量定时任务。
+A timing wheel is an efficient timer implementation suited to managing large numbers of scheduled tasks.
 
-### ✅ 基本使用
+### ✅ Basic Usage
 
 ```go
 import "github.com/zeromicro/go-zero/core/collection"
 
-// 创建时间轮：精度 100ms，3600 个槽位（支持最大 6 分钟延迟）
+// Create a timing wheel with 100 ms precision and 3,600 slots
+// (supporting delays of up to 6 minutes).
 tw, err := collection.NewTimingWheel(100*time.Millisecond, 3600)
 if err != nil {
     log.Fatal(err)
 }
 defer tw.Stop()
 
-// 设置定时器
+// Set a timer.
 tw.SetTimer("task-1", nil, 5*time.Second, func(key string, value interface{}) {
-    log.Printf("定时器触发: %s", key)
+    log.Printf("timer triggered: %s", key)
 })
 
-// 取消定时器
+// Cancel a timer.
 tw.RemoveTimer("task-1")
 ```
 
-### ✅ 参数选择
+### ✅ Choosing Parameters
 
 ```go
-// 根据最大延迟计算槽位数
-maxDelay := 10 * time.Minute   // 最大支持 10 分钟延迟
-interval := 100 * time.Millisecond  // 精度 100ms
-numSlots := int(maxDelay / interval)  // 槽位数 = 6000
+// Calculate the number of slots from the maximum delay.
+maxDelay := 10 * time.Minute          // Support delays of up to 10 minutes.
+interval := 100 * time.Millisecond   // 100 ms precision.
+numSlots := int(maxDelay / interval) // 6,000 slots.
 
 tw, _ := collection.NewTimingWheel(interval, numSlots)
 ```
 
-**参数说明：**
-- `interval`：时间格精度，越小精度越高但 CPU 开销越大
-- `numSlots`：槽位数量，影响内存占用和最大延迟
-- `最大延迟 = interval * numSlots`
+**Parameter notes:**
+- `interval`: tick precision; smaller values improve precision but increase CPU overhead.
+- `numSlots`: number of slots; affects memory usage and the maximum delay.
+- `maximum delay = interval * numSlots`
 
-### ✅ 请求超时管理
+### ✅ Request Timeout Management
 
 ```go
 type RequestManager struct {
@@ -307,7 +308,7 @@ func (rm *RequestManager) AddRequest(req *Request) {
 
     rm.requests[req.ID] = req
 
-    // 设置 30 秒超时
+    // Set a 30-second timeout.
     rm.tw.SetTimer(req.ID, nil, 30*time.Second, func(key string, value interface{}) {
         rm.handleTimeout(key)
     })
@@ -332,7 +333,7 @@ func (rm *RequestManager) handleTimeout(id string) {
 }
 ```
 
-### ✅ 延迟任务调度
+### ✅ Delayed Task Scheduling
 
 ```go
 type TaskScheduler struct {
@@ -346,7 +347,7 @@ func NewTaskScheduler() *TaskScheduler {
 
 func (s *TaskScheduler) ScheduleTask(taskID string, delay time.Duration, task func()) {
     s.tw.SetTimer(taskID, nil, delay, func(key string, value interface{}) {
-        // 异步执行耗时任务，避免阻塞时间轮
+        // Run expensive work asynchronously to avoid blocking the timing wheel.
         go task()
     })
 }
@@ -356,7 +357,7 @@ func (s *TaskScheduler) CancelTask(taskID string) {
 }
 ```
 
-### ✅ 心跳检测
+### ✅ Heartbeat Monitoring
 
 ```go
 type HeartbeatManager struct {
@@ -376,7 +377,7 @@ func NewHeartbeatManager(timeout time.Duration, onTimeout func(string)) *Heartbe
         onTimeout: onTimeout,
     }
 
-    // 定期检查
+    // Check periodically.
     tw.SetTimer("heartbeat-check", nil, time.Second, hm.checkHeartbeats)
     return hm
 }
@@ -394,66 +395,66 @@ func (hm *HeartbeatManager) checkHeartbeats(key string, value interface{}) {
         }
     }
 
-    // 继续下次检查
+    // Schedule the next check.
     hm.tw.SetTimer("heartbeat-check", nil, time.Second, hm.checkHeartbeats)
 }
 ```
 
-### ❌ 常见错误
+### ❌ Common Mistakes
 
 ```go
-// 错误：槽位数太少，无法支持需要的延迟时间
-tw, _ := collection.NewTimingWheel(time.Second, 10)  // 最大只支持 10 秒！
+// Wrong: too few slots to support the required delay.
+tw, _ := collection.NewTimingWheel(time.Second, 10)  // Supports only 10 seconds!
 
-// 错误：回调函数执行耗时操作阻塞时间轮
+// Wrong: expensive callback work blocks the timing wheel.
 tw.SetTimer("task", nil, delay, func(key string, value interface{}) {
-    time.Sleep(10 * time.Second)  // 阻塞！
-    processLargeData()            // 耗时操作！
+    time.Sleep(10 * time.Second) // Blocks!
+    processLargeData()           // Expensive operation!
 })
 
-// 错误：程序结束时忘记停止时间轮
-// defer tw.Stop()  // 必须调用！
+// Wrong: forgetting to stop the timing wheel during shutdown.
+// defer tw.Stop() // This call is required!
 ```
 
-### 最佳实践
+### Best Practices
 
-- 回调函数中执行耗时操作应使用 goroutine
-- 程序结束时务必调用 `tw.Stop()`
-- 根据业务需求选择合适的精度和槽位数
-- 使用有意义的键名便于调试和管理
+- Use a goroutine for expensive work in callbacks.
+- Always call `tw.Stop()` during shutdown.
+- Choose suitable precision and slot counts for your requirements.
+- Use meaningful keys to simplify debugging and management.
 
 ---
 
 ## SafeMap
 
-通用的并发安全 Map 实现，适合读多写少的场景。
+A general-purpose concurrent map suited to read-heavy workloads with infrequent writes.
 
-### ✅ 基本使用
+### ✅ Basic Usage
 
 ```go
 import "github.com/zeromicro/go-zero/core/collection"
 
 m := collection.NewSafeMap()
 
-// 设置值
+// Set a value.
 m.Set("key", "value")
 
-// 获取值
+// Get a value.
 if val, ok := m.Get("key"); ok {
     fmt.Println(val.(string))
 }
 
-// 删除值
+// Delete a value.
 m.Del("key")
 
-// 遍历
+// Iterate over all entries.
 m.Range(func(key string, value interface{}) bool {
     fmt.Printf("%s: %v\n", key, value)
-    return true  // 继续遍历
+    return true // Continue iterating.
 })
 ```
 
-### ✅ 服务实例注册表
+### ✅ Service Instance Registry
 
 ```go
 type ServiceRegistry struct {
@@ -494,7 +495,7 @@ func (r *ServiceRegistry) ListServices() []*ServiceInfo {
 }
 ```
 
-### ✅ 共享配置存储
+### ✅ Shared Configuration Store
 
 ```go
 type ConfigStore struct {
@@ -530,36 +531,36 @@ func (s *ConfigStore) GetString(key string, defaultVal string) string {
 }
 ```
 
-### ✅ SafeMap vs sync.Map 选择
+### ✅ Choosing Between SafeMap and sync.Map
 
-| 场景 | 推荐 | 原因 |
+| Scenario | Recommendation | Reason |
 |------|------|------|
-| 读多写少，需要遍历 | SafeMap | 简单直接，Range 方便 |
-| 写一次，读多次 | sync.Map | 针对 this 场景优化 |
-| 高频写入 | 都不推荐 | 考虑分片锁方案 |
+| Read-heavy, infrequent writes, iteration required | SafeMap | Simple and direct; convenient `Range` support |
+| Write once, read many times | sync.Map | Optimized for this workload |
+| Frequent writes | Neither | Consider a sharded-lock design |
 
-### ⚠️ 内存管理注意事项
+### ⚠️ Memory Management Considerations
 
-Go 的 map（包括 sync.Map 和 SafeMap）有一个重要特性：**删除元素不会自动释放内存**。
+Go maps, including `sync.Map` and `SafeMap`, have an important property: **deleting entries does not automatically release their allocated memory**.
 
 ```go
-// 问题场景
+// Problem scenario.
 m := collection.NewSafeMap()
 
-// 大量写入
+// Insert many entries.
 for i := 0; i < 1000000; i++ {
     m.Set(fmt.Sprintf("key-%d", i), i)
 }
 
-// 大量删除
+// Delete many entries.
 for i := 0; i < 1000000; i++ {
     m.Del(fmt.Sprintf("key-%d", i))
 }
 
-// 内存占用仍然很高！底层数组未缩容
+// Memory usage remains high because the backing storage does not shrink.
 ```
 
-### ✅ 定期重建回收内存
+### ✅ Rebuild Periodically to Reclaim Memory
 
 ```go
 type ServiceRegistry struct {
@@ -571,7 +572,7 @@ func (r *ServiceRegistry) Compact() {
     r.mu.Lock()
     defer r.mu.Unlock()
 
-    // 创建新 map 并迁移有效数据
+    // Create a new map and migrate live entries.
     newMap := collection.NewSafeMap()
     r.services.Range(func(key string, value interface{}) bool {
         newMap.Set(key, value)
@@ -580,7 +581,7 @@ func (r *ServiceRegistry) Compact() {
     r.services = newMap
 }
 
-// 定期自动压缩
+// Compact automatically on a schedule.
 func (r *ServiceRegistry) StartCompactor(interval time.Duration) {
     ticker := time.NewTicker(interval)
     go func() {
@@ -591,47 +592,47 @@ func (r *ServiceRegistry) StartCompactor(interval time.Duration) {
 }
 ```
 
-### ❌ 常见错误
+### ❌ Common Mistakes
 
 ```go
-// 错误：在 Range 中修改 map
+// Wrong: modifying the map while iterating with Range.
 m.Range(func(key string, value interface{}) bool {
-    m.Del(key)  // 可能导致问题！
+    m.Del(key) // May cause problems!
     return true
 })
 
-// 错误：频繁写操作导致锁竞争
+// Wrong: frequent writes cause lock contention.
 for i := 0; i < 10000; i++ {
-    go m.Set(key, value)  // 高频写入不适合 SafeMap
+    go m.Set(key, value) // SafeMap is not suitable for frequent writes.
 }
 
-// 错误：大量写入后又删除导致内存浪费
+// Wrong: inserting and then deleting many entries wastes memory.
 for i := 0; i < 1000000; i++ {
     m.Set(key, value)
-    m.Del(key)  // 内存不会释放！
+    m.Del(key) // The memory is not released!
 }
 ```
 
-### 最佳实践
+### Best Practices
 
-- 适合读多写少、需要遍历的场景
-- 在 Range 中避免修改 map
-- 大小波动大的场景定期重建
-- 高频写入场景考虑分片锁方案
+- Use it for read-heavy workloads with infrequent writes that require iteration.
+- Avoid modifying the map inside `Range`.
+- Rebuild it periodically when its size fluctuates significantly.
+- Consider a sharded-lock design for write-heavy workloads.
 
 ---
 
-## 完整使用示例
+## Complete Example
 
-### 多级缓存架构
+### Multi-Level Cache Architecture
 
 ```go
 type CacheService struct {
-    localCache  *collection.Cache      // L1: 本地缓存
-    redisCache  *redis.Redis           // L2: Redis 缓存
-    db          sqlx.SqlConn           // L3: 数据库
-    requestLog  *collection.Ring       // 请求日志
-    timeoutMgr  *collection.TimingWheel // 超时管理
+    localCache *collection.Cache       // L1: local cache
+    redisCache *redis.Redis            // L2: Redis cache
+    db         sqlx.SqlConn            // L3: database
+    requestLog *collection.Ring        // Request log
+    timeoutMgr *collection.TimingWheel // Timeout management
 }
 
 func NewCacheService(cfg config.Config) *CacheService {
@@ -649,13 +650,13 @@ func NewCacheService(cfg config.Config) *CacheService {
 }
 
 func (s *CacheService) Get(ctx context.Context, key string) (interface{}, error) {
-    // L1: 本地缓存
+    // L1: local cache.
     if val, ok := s.localCache.Get(key); ok {
         s.requestLog.Add("L1 hit: " + key)
         return val, nil
     }
 
-    // L2: Redis 缓存
+    // L2: Redis cache.
     val, err := s.redisCache.Get(key)
     if err == nil {
         s.localCache.Set(key, val)
@@ -663,13 +664,13 @@ func (s *CacheService) Get(ctx context.Context, key string) (interface{}, error)
         return val, nil
     }
 
-    // L3: 数据库
+    // L3: database.
     val, err = s.queryDB(ctx, key)
     if err != nil {
         return nil, err
     }
 
-    // 回填缓存
+    // Populate the caches.
     s.localCache.Set(key, val)
     s.redisCache.Set(key, val)
 
@@ -679,30 +680,30 @@ func (s *CacheService) Get(ctx context.Context, key string) (interface{}, error)
 
 ---
 
-## 最佳实践总结
+## Best-Practice Summary
 
 ### ✅ DO
 
-| 数据结构 | 最佳实践 |
+| Data Structure | Best Practices |
 |---------|---------|
-| LRU Cache | 设置合理大小；淘汰回调清理资源；异步执行耗时操作 |
-| Ring Buffer | 固定大小；存储轻量对象；配合定时读取 |
-| TimingWheel | 回调中使用 goroutine；程序结束调用 Stop() |
-| SafeMap | 读多写少场景；定期重建回收内存 |
+| LRU Cache | Choose a sensible size; clean up resources in eviction callbacks; run expensive work asynchronously |
+| Ring Buffer | Use a fixed size; store lightweight objects; read periodically |
+| TimingWheel | Use goroutines in callbacks; call `Stop()` during shutdown |
+| SafeMap | Use for read-heavy workloads; rebuild periodically to reclaim memory |
 
 ### ❌ DON'T
 
-| 数据结构 | 避免做法 |
+| Data Structure | Avoid |
 |---------|---------|
-| LRU Cache | 容量过大；缓存大对象；键名冲突 |
-| Ring Buffer | 存储大对象；大小过大 |
-| TimingWheel | 回调阻塞；槽位数太少；忘记 Stop() |
-| SafeMap | Range 中修改；高频写入；忽略内存问题 |
+| LRU Cache | Excessive capacity; caching large objects; key collisions |
+| Ring Buffer | Storing large objects; excessive capacity |
+| TimingWheel | Blocking callbacks; too few slots; forgetting `Stop()` |
+| SafeMap | Modifying during `Range`; frequent writes; ignoring memory usage |
 
 ---
 
-## 相关资源
+## Related Resources
 
-- [REST API Patterns](./rest-api-patterns.md) - API 层缓存策略
-- [Database Patterns](./database-patterns.md) - 数据库层 Redis 缓存
-- [Resilience Patterns](./resilience-patterns.md) - 弹性模式（熔断、限流）
+- [REST API Patterns](./rest-api-patterns.md) - API-layer caching strategies
+- [Database Patterns](./database-patterns.md) - Redis caching at the database layer
+- [Resilience Patterns](./resilience-patterns.md) - Resilience patterns such as circuit breaking and rate limiting

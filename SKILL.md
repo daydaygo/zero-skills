@@ -1,22 +1,7 @@
 ---
 name: zero-skills
-description: |
-  Comprehensive knowledge base for go-zero microservices framework.
-
-  **Use this skill when:**
-  - Building REST APIs with go-zero (Handler → Logic → Model architecture)
-  - Creating RPC services with service discovery and load balancing
-  - Implementing database operations with sqlx, MongoDB, or Redis caching
-  - Using high-performance data structures (LRU Cache, Ring Buffer, TimingWheel, SafeMap)
-  - Adding resilience patterns (circuit breaker, rate limiting, load shedding)
-  - Troubleshooting go-zero issues or understanding framework conventions
-  - Generating production-ready microservices code
-
-  **Features:**
-  - Complete pattern guides with ✅ correct and ❌ incorrect examples
-  - Three-layer architecture enforcement
-  - Production best practices
-  - Common pitfall solutions
+description: This skill should be used when the user asks to "create a go-zero API", "build a REST service with go-zero", "generate code with goctl", "add middleware to go-zero", "implement a gRPC service", "set up service discovery", "add circuit breaker or rate limiting", "use go-zero database model or collection data structures", "troubleshoot go-zero errors", or is working with go-zero microservices, .api files, .proto files, or a go.mod containing github.com/zeromicro/go-zero.
+version: 1.0.0
 license: MIT
 allowed-tools:
   - Read
@@ -127,6 +112,11 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 **When to load**: Setting up Claude Code for zero-skills usage
 **Contains**: Installation, invocation methods, advanced features (subagents, dynamic context)
 
+#### Tool Integration Guides
+**File**: [getting-started/README.md](getting-started/README.md)
+**When to load**: Setting up zero-skills with Cursor, GitHub Copilot, Windsurf, or Codex
+**Contains**: Feature comparison table, per-tool setup instructions (Claude Code, Cursor, Copilot, Windsurf, Codex)
+
 ## 🚀 Common Workflows
 
 These workflows guide you through typical go-zero development tasks:
@@ -221,6 +211,7 @@ Follow this path based on your needs:
 1. **Start here**: [Official go-zero Quick Start](https://go-zero.dev/docs/quick-start)
    Install go-zero, create your first API, understand basic concepts
 
+2. **Add a database**: [references/database-patterns.md](references/database-patterns.md)
    Connect to MySQL/PostgreSQL, generate models, implement CRUD
 
 ### 🟡 Building production services?
@@ -243,7 +234,7 @@ Follow this path based on your needs:
    Learn advanced features like subagents, dynamic context, and argument passing
    Run demo projects to validate your environment
 
-3. **Verify knowledge**: [examples/verify-tutorial.sh](examples/verify-tutorial.sh)
+2. **Verify knowledge**: [examples/verify-tutorial.sh](examples/verify-tutorial.sh)
    Script to check if examples work correctly
 
 ## 🔗 Integration with go-zero AI Ecosystem
@@ -273,8 +264,8 @@ See [getting-started/claude-code-guide.md](getting-started/claude-code-guide.md)
 
 ## 📝 Version Compatibility
 
-- **Target version**: go-zero 1.5+
-- **Go version**: Go 1.19 or later recommended
+- **Stable target**: go-zero v1.10.3 (Go 1.24 or later required)
+- **Master compatibility**: Use Go 1.25 or later when testing against the go-zero `master` branch
 - **Updates**: Patterns updated regularly to reflect framework evolution
 - **Breaking changes**: Check official docs for API changes between versions
 
