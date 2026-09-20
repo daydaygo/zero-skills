@@ -465,7 +465,7 @@ func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     }
 
     // Check Redis
-    if err := h.svcCtx.Redis.Ping(); err != nil {
+    if ok := h.svcCtx.Redis.PingCtx(r.Context()); !ok {
         httpx.ErrorCtx(r.Context(), w, errors.New("redis unhealthy"))
         return
     }
