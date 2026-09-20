@@ -642,7 +642,12 @@ func validateToken(tokenString, secret string) (int64, error) {
         return 0, errors.New("invalid claims")
     }
 
-    userId := int64(claims["userId"].(float64))
+    userIdValue, ok := claims["userId"].(float64)
+    if !ok {
+        return 0, errors.New("invalid userId claim")
+    }
+
+    userId := int64(userIdValue)
     return userId, nil
 }
 ```
