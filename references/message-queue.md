@@ -2,607 +2,227 @@
 
 ## Overview
 
-go-zero provides [go-queue](https://github.com/zeromicro/go-queue) for distributed task processing and message queuing. It supports two modes:
+[go-queue](https://github.com/zeromicro/go-queue) provides two queue implementations commonly used with go-zero services:
 
-| Mode | Backend | Use Case |
-|------|---------|----------|
-| **dq** | Beanstalkd + Redis | Delayed tasks, scheduled jobs, at-least-once delivery |
-| **kq** | Kafka | High-throughput messaging, event streaming |
+| Package | Backend | Best fit |
+|---|---|---|
+| `dq` | Beanstalkd + Redis | Scheduled and delayed jobs |
+| `kq` | Kafka | Event streams and consumer groups |
 
-## dq: Delayed Task Queue
+Both systems can deliver a message more than once. Make handlers idempotent and treat malformed or permanently failing messages explicitly rather than silently retrying forever.
 
-### When to Use dq
+## Delayed Queue (`dq`)
 
-- Scheduled tasks (daily reports, cleanup jobs)
-- Delayed execution (order timeout, reminder notifications)
-- Distributed task coordination
-- Tasks requiring persistence and recovery
+`dq` stores delayed jobs in Beanstalkd and uses Redis to coordinate consumption across nodes.
 
-### ✅ Correct Pattern: Configuration
+### Configuration
 
 ```yaml
-# etc/job.yaml
-Name: job-service
-
-Log:
-  ServiceName: job-service
-  Level: info
+Name: order-jobs
 
 DqConf:
   Beanstalks:
-    - Endpoint: beanstalkd:7771
+    - Endpoint: beanstalkd-1:11300
       Tube: orders
-    - Endpoint: beanstalkd:7772
+    - Endpoint: beanstalkd-2:11300
       Tube: orders
   Redis:
     Host: redis:6379
     Type: node
-    Pass: ""  # optional
+    Pass: ""
 ```
 
 ```go
-// internal/config/config.go
 type Config struct {
     service.ServiceConf
     DqConf dq.DqConf
 }
 ```
 
-### ✅ Correct Pattern: Producer
+### Producer
 
 ```go
-// internal/logic/orderproducerlogic.go
-package logic
-
-import (
-    "context"
-    "encoding/json"
-    "time"
-    
-    "github.com/zeromicro/go-queue/dq"
-    "github.com/zeromicro/go-zero/core/logx"
-    "job/internal/svc"
-)
-
 type OrderProducer struct {
-    ctx    context.Context
-    svcCtx *svc.ServiceContext
-    logx.Logger
     producer dq.Producer
 }
 
-func NewOrderProducerLogic(ctx context.Context, svcCtx *svc.ServiceContext) *OrderProducer {
-    return &OrderProducer{
-        ctx:      ctx,
-        svcCtx:   svcCtx,
-        Logger:   logx.WithContext(ctx),
-        producer: dq.NewProducer([]dq.Beanstalk{
-            {Endpoint: "beanstalkd:7771", Tube: "orders"},
-            {Endpoint: "beanstalkd:7772", Tube: "orders"},
-        }),
-    }
+func NewOrderProducer(c dq.DqConf) *OrderProducer {
+    return &OrderProducer{producer: dq.NewProducer(c.Beanstalks)}
 }
 
-func (p *OrderProducer) ScheduleOrderTimeout(orderID int64) error {
-    // Create task payload
-    task := map[string]interface{}{
-        "type":     "order_timeout",
-        "order_id": orderID,
-        "created":  time.Now().Unix(),
-    }
-    
-    data, err := json.Marshal(task)
+func (p *OrderProducer) ScheduleTimeout(orderID int64, delay time.Duration) error {
+    body, err := json.Marshal(struct {
+        Type    string `json:"type"`
+        OrderID int64  `json:"order_id"`
+    }{Type: "order_timeout", OrderID: orderID})
     if err != nil {
         return err
     }
-    
-    // Delay for 30 minutes
-    delay := 30 * time.Minute
-    _, err = p.producer.Delay(data, delay)
-    
-    if err != nil {
-        logx.WithContext(p.ctx).Errorw("failed to schedule order timeout",
-            logx.Field("order_id", orderID),
-            logx.Field("error", err.Error()),
-        )
-        return err
-    }
-    
-    logx.WithContext(p.ctx).Infow("scheduled order timeout",
-        logx.Field("order_id", orderID),
-        logx.Field("delay", delay),
-    )
-    
-    return nil
+
+    _, err = p.producer.Delay(body, delay)
+    return err
 }
 
-// Immediate execution
-func (p *OrderProducer) SendImmediate(taskType string, data interface{}) error {
-    payload, err := json.Marshal(map[string]interface{}{
-        "type": taskType,
-        "data": data,
-    })
-    if err != nil {
-        return err
-    }
-    
-    return p.producer.At(payload, time.Now())
+func (p *OrderProducer) ScheduleAt(body []byte, at time.Time) error {
+    _, err := p.producer.At(body, at)
+    return err
 }
 ```
 
-### ✅ Correct Pattern: Consumer
+Use the identifier returned by `Delay` or `At` when the application needs to track the scheduled job.
+
+### Consumer
+
+`Consumer.Consume` starts the worker group and blocks. Run it as the process's main workload or in a goroutine whose lifecycle is owned by the process.
 
 ```go
-// internal/logic/orderconsumerlogic.go
-package logic
-
-import (
-    "context"
-    "encoding/json"
-    
-    "github.com/zeromicro/go-queue/dq"
-    "github.com/zeromicro/go-zero/core/logx"
-    "github.com/zeromicro/go-zero/core/threading"
-    "job/internal/svc"
-)
-
-type OrderConsumer struct {
-    ctx    context.Context
-    svcCtx *svc.ServiceContext
-    logx.Logger
-}
-
-func NewOrderConsumerLogic(ctx context.Context, svcCtx *svc.ServiceContext) *OrderConsumer {
-    return &OrderConsumer{
-        ctx:    ctx,
-        svcCtx: svcCtx,
-        Logger: logx.WithContext(ctx),
-    }
-}
-
-func (c *OrderConsumer) Start() {
-    logx.Info("starting order consumer")
-    
-    threading.GoSafe(func() {
-        c.svcCtx.Consumer.Consume(c.handleMessage)
-    })
-}
-
-func (c *OrderConsumer) Stop() {
-    logx.Info("stopping order consumer")
-}
-
-func (c *OrderConsumer) handleMessage(body []byte) {
-    var task struct {
-        Type    string          `json:"type"`
-        OrderID int64           `json:"order_id"`
-        Data    json.RawMessage `json:"data"`
-    }
-    
+consumer := dq.NewConsumer(c.DqConf)
+consumer.Consume(func(body []byte) {
+    var task OrderTask
     if err := json.Unmarshal(body, &task); err != nil {
-        logx.Errorf("failed to unmarshal task: %v", err)
+        logx.Errorf("discarding malformed order task: %v", err)
         return
     }
-    
-    logx.Infow("processing task",
-        logx.Field("type", task.Type),
-        logx.Field("order_id", task.OrderID),
-    )
-    
-    switch task.Type {
-    case "order_timeout":
-        c.handleOrderTimeout(task.OrderID)
-    case "order_reminder":
-        c.handleOrderReminder(task.OrderID)
-    default:
-        logx.Errorf("unknown task type: %s", task.Type)
-    }
-}
 
-func (c *OrderConsumer) handleOrderTimeout(orderID int64) {
-    // Check order status
-    order, err := c.svcCtx.OrderModel.FindOne(c.ctx, orderID)
-    if err != nil {
-        logx.Errorf("failed to find order: %v", err)
-        return
+    if err := handler.Process(context.Background(), task); err != nil {
+        // Decide whether to retry, send to a dead-letter flow, or record the
+        // task for manual recovery. Keep Process idempotent.
+        logx.Errorf("process order task %d: %v", task.OrderID, err)
     }
-    
-    // Cancel if still pending
-    if order.Status == "pending" {
-        err = c.svcCtx.OrderModel.UpdateStatus(c.ctx, orderID, "cancelled")
-        if err != nil {
-            logx.Errorf("failed to cancel order: %v", err)
-        } else {
-            logx.Infof("order %d cancelled due to timeout", orderID)
-        }
-    }
-}
-
-func (c *OrderConsumer) handleOrderReminder(orderID int64) {
-    // Send reminder notification
-    // ...
-}
+})
 ```
 
-### ✅ Correct Pattern: Service Registration
+The current `dq.Consumer` interface exposes `Consume` but no `Stop` method. Do not wrap it in a fake `service.Service` whose `Stop` method cannot stop the underlying consumers. Use process-level shutdown and verify the go-queue version's lifecycle behavior before embedding it in a larger service group.
 
-```go
-// internal/handler/router.go
-package handler
+## Kafka Queue (`kq`)
 
-import (
-    "context"
-    "github.com/zeromicro/go-zero/core/service"
-    "job/internal/logic"
-    "job/internal/svc"
-)
-
-func RegisterJobs(svcCtx *svc.ServiceContext, group *service.ServiceGroup) {
-    group.Add(logic.NewOrderConsumerLogic(context.Background(), svcCtx))
-    group.Add(logic.NewNotificationProducerLogic(context.Background(), svcCtx))
-}
-```
-
-```go
-// internal/svc/servicecontext.go
-package svc
-
-import (
-    "github.com/zeromicro/go-queue/dq"
-    "job/internal/config"
-)
-
-type ServiceContext struct {
-    Config   config.Config
-    Consumer dq.Consumer
-}
-
-func NewServiceContext(c config.Config) *ServiceContext {
-    return &ServiceContext{
-        Config:   c,
-        Consumer: dq.NewConsumer(c.DqConf),
-    }
-}
-```
-
-```go
-// main.go
-package main
-
-import (
-    "flag"
-    "os"
-    "os/signal"
-    "syscall"
-    
-    "github.com/zeromicro/go-zero/core/conf"
-    "github.com/zeromicro/go-zero/core/logx"
-    "github.com/zeromicro/go-zero/core/service"
-    "job/internal/config"
-    "job/internal/handler"
-    "job/internal/svc"
-)
-
-var configFile = flag.String("f", "etc/job.yaml", "config file")
-
-func main() {
-    flag.Parse()
-    
-    var c config.Config
-    conf.MustLoad(*configFile, &c)
-    
-    svcCtx := svc.NewServiceContext(c)
-    
-    group := service.NewServiceGroup()
-    handler.RegisterJobs(svcCtx, group)
-    
-    // Handle shutdown signals
-    ch := make(chan os.Signal, 1)
-    signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-    
-    go func() {
-        sig := <-ch
-        logx.Infof("received signal: %s", sig)
-        group.Stop()
-    }()
-    
-    group.Start()
-}
-```
-
-### ❌ Common Mistakes
-
-```go
-// DON'T: Block in consumer handler
-func (c *Consumer) handleMessage(body []byte) {
-    // ❌ Long-running operation blocks other messages
-    time.Sleep(5 * time.Minute)
-    c.process(body)
-}
-
-// ✅ Use goroutine for long operations
-func (c *Consumer) handleMessage(body []byte) {
-    go func() {
-        c.process(body)
-    }()
-}
-
-// DON'T: Panic in handler (crashes consumer)
-func (c *Consumer) handleMessage(body []byte) {
-    // ❌ Panic will crash the consumer
-    if err := json.Unmarshal(body, &task); err != nil {
-        panic(err)
-    }
-}
-
-// ✅ Handle errors gracefully
-func (c *Consumer) handleMessage(body []byte) {
-    if err := json.Unmarshal(body, &task); err != nil {
-        logx.Errorf("unmarshal error: %v", err)
-        return  // Log and continue
-    }
-}
-
-// DON'T: Skip Redis configuration (leads to duplicate consumption)
-// dq uses Redis for deduplication with multiple Beanstalkd instances
-```
-
-## kq: Kafka Message Queue
-
-### When to Use kq
-
-- High-throughput event streaming
-- Real-time data pipelines
-- Event-driven architectures
-- Log aggregation
-
-### ✅ Correct Pattern: Configuration
+### Configuration
 
 ```yaml
-# etc/kafka-consumer.yaml
-Name: kafka-consumer
-
-KqConsumerConf:
-  Name: order-events
-  Brokers:
-    - kafka1:9092
-    - kafka2:9092
-  Topic: orders
-  Group: order-processor
-  Offset: first   # first, last
-  Conns: 1
-  Consumers: 8
-  Processors: 16
+Name: order-events
+Brokers:
+  - kafka-1:9092
+  - kafka-2:9092
+Group: order-processor
+Topic: orders
+Offset: first
+Conns: 1
+Consumers: 8
+Processors: 8
+ForceCommit: true
 ```
 
-```go
-// internal/config/config.go
-type Config struct {
-    service.ServiceConf
-    KqConsumerConf kq.KqConf
-}
-```
+Load this directly into `kq.KqConf`, or nest it in an application configuration field.
 
-### ✅ Correct Pattern: Kafka Consumer
+### Consumer
+
+`kq.MustNewQueue` returns a `queue.MessageQueue`, which implements `Start` and `Stop`. The handler receives the message context, key, and value.
 
 ```go
-// internal/logic/kafkaconsumerlogic.go
-package logic
-
-import (
-    "context"
-    "encoding/json"
-    
-    "github.com/zeromicro/go-queue/kq"
-    "github.com/zeromicro/go-zero/core/logx"
-    "github.com/zeromicro/go-zero/core/service"
-    "kafka-consumer/internal/svc"
-)
-
-type KafkaConsumer struct {
-    ctx    context.Context
+type OrderEventHandler struct {
     svcCtx *svc.ServiceContext
-    logx.Logger
-    q      *kq.KafkaQueue
 }
 
-func NewKafkaConsumerLogic(ctx context.Context, svcCtx *svc.ServiceContext) *KafkaConsumer {
-    return &KafkaConsumer{
-        ctx:    ctx,
-        svcCtx: svcCtx,
-        Logger: logx.WithContext(ctx),
-    }
-}
-
-func (k *KafkaConsumer) Start() {
-    logx.Info("starting kafka consumer")
-    
-    k.q = kq.MustNewQueue(k.svcCtx.Config.KqConsumerConf, k)
-    k.q.Start()
-}
-
-func (k *KafkaConsumer) Stop() {
-    logx.Info("stopping kafka consumer")
-    if k.q != nil {
-        k.q.Stop()
-    }
-}
-
-// Consume implements kq.Consumer interface
-func (k *KafkaConsumer) Consume(key, val string) error {
+func (h *OrderEventHandler) Consume(ctx context.Context, key, value string) error {
     var event OrderEvent
-    if err := json.Unmarshal([]byte(val), &event); err != nil {
-        logx.Errorf("failed to unmarshal event: %v", err)
-        return nil // Skip invalid messages
+    if err := json.Unmarshal([]byte(value), &event); err != nil {
+        // Returning nil acknowledges input that can never be decoded. Record
+        // it first if the system requires a dead-letter trail.
+        logx.WithContext(ctx).Errorf("invalid order event key=%q: %v", key, err)
+        return nil
     }
-    
-    logx.Infow("processing order event",
-        logx.Field("event_type", event.Type),
-        logx.Field("order_id", event.OrderID),
-    )
-    
-    switch event.Type {
-    case "order_created":
-        return k.handleOrderCreated(&event)
-    case "order_cancelled":
-        return k.handleOrderCancelled(&event)
-    }
-    
-    return nil
+
+    return h.svcCtx.OrderEvents.Apply(ctx, event)
 }
+
+handler := &OrderEventHandler{svcCtx: svcCtx}
+q := kq.MustNewQueue(c.KqConsumerConf, handler)
+defer q.Stop()
+q.Start()
 ```
 
-### ✅ Correct Pattern: Kafka Producer
+For a small handler, `kq.WithHandle` avoids defining a type:
 
 ```go
-// internal/logic/kafkaproducerlogic.go
-package logic
+q := kq.MustNewQueue(c.KqConsumerConf, kq.WithHandle(
+    func(ctx context.Context, key, value string) error {
+        return processEvent(ctx, key, value)
+    },
+))
+defer q.Stop()
+q.Start()
+```
 
-import (
-    "context"
-    "encoding/json"
-    
-    "github.com/zeromicro/go-queue/kq"
-    "github.com/zeromicro/go-zero/core/logx"
-)
+### Producer
 
-type KafkaProducer struct {
-    producer *kq.Producer
-    logx.Logger
-}
+Use `kq.Pusher`; there is no `kq.Producer` type.
 
-func NewKafkaProducer(brokers []string, topic string) *KafkaProducer {
-    return &KafkaProducer{
-        producer: kq.NewProducer(kq.KqConf{
-            Brokers: brokers,
-            Topic:   topic,
-        }),
-        Logger: logx.NewLogx(),
+```go
+pusher := kq.NewPusher(c.Brokers, c.Topic)
+defer func() {
+    if err := pusher.Close(); err != nil {
+        logx.Errorf("close Kafka pusher: %v", err)
     }
+}()
+
+body, err := json.Marshal(event)
+if err != nil {
+    return err
 }
 
-func (p *KafkaProducer) PublishOrderEvent(event *OrderEvent) error {
-    data, err := json.Marshal(event)
+// A stable domain key keeps events for the same aggregate on one partition.
+return pusher.PushWithKey(ctx, strconv.FormatInt(event.OrderID, 10), string(body))
+```
+
+`NewPusher` buffers by default. Use `kq.WithSyncPush()` only when the caller must observe the broker write synchronously, and always close the pusher so buffered messages are flushed.
+
+## Retry and Idempotency
+
+Retries are application policy, not a substitute for idempotency:
+
+```go
+func (h *OrderEventHandler) Consume(ctx context.Context, key, value string) error {
+    event, err := decodeOrderEvent(value)
+    if err != nil {
+        return nil // malformed input is not transient; record it as needed
+    }
+
+    applied, err := h.svcCtx.ProcessedEvents.TryStart(ctx, event.ID)
     if err != nil {
         return err
     }
-    
-    return p.producer.Publish(string(event.OrderID), string(data))
+    if !applied {
+        return nil // duplicate delivery
+    }
+
+    return h.svcCtx.OrderEvents.Apply(ctx, event)
 }
 ```
 
-## Delay Queue Patterns
+The idempotency record and business update should share a transaction where the storage system supports it. If they cannot, design a recoverable state transition instead of assuming exactly-once delivery.
 
-### ✅ Correct Pattern: Multi-Stage Delay
+## Choosing Between `dq` and `kq`
 
-```go
-// Order reminder: 10 min before, at expiration time
-func (p *OrderProducer) ScheduleOrderReminders(orderID int64, expireTime time.Time) error {
-    // First reminder: 10 minutes before expiration
-    firstReminder := expireTime.Add(-10 * time.Minute)
-    if firstReminder.After(time.Now()) {
-        task := OrderTask{
-            Type:    "order_reminder",
-            OrderID: orderID,
-            Stage:   "first",
-        }
-        data, _ := json.Marshal(task)
-        p.producer.At(data, firstReminder)
-    }
-    
-    // Final notification: at expiration
-    task := OrderTask{
-        Type:    "order_expire",
-        OrderID: orderID,
-        Stage:   "final",
-    }
-    data, _ := json.Marshal(task)
-    return p.producer.At(data, expireTime)
-}
-```
+| Requirement | Prefer |
+|---|---|
+| Execute at a future time | `dq` |
+| Consumer groups and replay | `kq` |
+| Per-key ordering | `kq` with stable message keys |
+| Simple scheduled background jobs | `dq` |
+| High-throughput event stream | `kq` |
 
-### ✅ Correct Pattern: Retry with Exponential Backoff
+## Checklist
 
-```go
-func (p *Producer) ScheduleRetry(taskType string, data interface{}, attempt int) error {
-    if attempt > 5 {
-        return errors.New("max retries exceeded")
-    }
-    
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-    delay := time.Second * time.Duration(1<<attempt)
-    
-    payload := RetryTask{
-        Type:    taskType,
-        Data:    data,
-        Attempt: attempt + 1,
-    }
-    
-    body, _ := json.Marshal(payload)
-    return p.producer.Delay(body, delay)
-}
-```
-
-## Comparison: dq vs kq
-
-| Feature | dq | kq |
-|---------|-----|-----|
-| **Backend** | Beanstalkd | Kafka |
-| **Persistence** | Yes (disk) | Yes (disk) |
-| **Delayed Tasks** | ✅ Native | ❌ Requires implementation |
-| **Throughput** | Medium | Very High |
-| **Ordering** | Per tube | Per partition |
-| **Replay** | Limited | ✅ Full replay |
-| **Deduplication** | Redis-based | Consumer group-based |
-| **Best For** | Scheduled jobs, delays | Event streaming, high throughput |
-
-## Best Practices
-
-### ✅ Always Follow
-
-- Use multiple Beanstalkd instances for HA (dq)
-- Configure Redis for deduplication (dq)
-- Handle panics in consumer handlers
-- Log all task processing for debugging
-- Implement idempotent handlers (messages may be delivered more than once)
-- Use appropriate consumer/processor counts for kq
-
-### ❌ Never Do
-
-- Block indefinitely in message handlers
-- Skip error handling (errors will cause message re-delivery)
-- Process without idempotency (duplicates possible)
-- Use synchronous operations in async handlers
-- Ignore graceful shutdown (may lose in-flight messages)
-
-## Troubleshooting
-
-### Beanstalkd Connection Issues
-
-```bash
-# Check beanstalkd status
-telnet beanstalkd 7771
-# Stats
-stats
-
-# List tubes
-list-tubes
-```
-
-### Kafka Issues
-
-```bash
-# Check consumer group lag
-kafka-consumer-groups --bootstrap-server kafka:9092 \
-  --describe --group order-processor
-
-# Reset consumer offset
-kafka-consumer-groups --bootstrap-server kafka:9092 \
-  --group order-processor --reset-offsets --to-earliest --execute
-```
+- Keep handlers idempotent.
+- Bound processing time and propagate `context.Context` where the API provides it.
+- Distinguish malformed messages from transient failures.
+- Define retry and dead-letter behavior for the application.
+- Use stable Kafka keys when ordering by aggregate matters.
+- Close `kq.Pusher` and stop `kq` consumers during shutdown.
+- Load broker addresses, credentials, topics, and groups from configuration.
 
 ## References
 
-- [go-queue GitHub](https://github.com/zeromicro/go-queue)
-- [go-zero go-queue Documentation](https://go-zero.dev/docs/go-queue)
-- [Beanstalkd Protocol](https://beanstalkd.github.io/)
+- [go-queue repository](https://github.com/zeromicro/go-queue)
+- [go-queue `dq` package](https://pkg.go.dev/github.com/zeromicro/go-queue/dq)
+- [go-queue `kq` package](https://pkg.go.dev/github.com/zeromicro/go-queue/kq)

@@ -74,24 +74,24 @@ var (
 // internal/logic/createorderlogic.go
 func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) (*types.CreateOrderResp, error) {
     start := time.Now()
-    
+
     // Business logic
     resp, err := l.createOrder(req)
-    
+
     // Record metrics
     duration := time.Since(start).Seconds()
     status := "success"
     if err != nil {
         status = "error"
     }
-    
+
     metrics.RequestTotal.WithLabelValues("POST", "/api/order", status).Inc()
     metrics.RequestDuration.WithLabelValues("POST", "/api/order").Observe(duration)
-    
+
     if err == nil {
         metrics.OrdersCreated.WithLabelValues("success", req.PaymentMethod).Inc()
     }
-    
+
     return resp, err
 }
 ```
@@ -99,12 +99,13 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) (*types.Create
 ### ❌ Common Mistakes
 
 ```go
-// DON'T: Record metrics in handler (violates layer separation)
+// DON'T: Reimplement generic HTTP metrics in every handler. go-zero's
+// Prometheus middleware already records route-level request metrics.
 func CreateUserHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
-        // ❌ Metrics should be in logic layer
+        // ❌ Duplicates framework-level request instrumentation
         metrics.RequestTotal.Inc()
-        
+
         var req types.CreateUserReq
         httpx.Parse(r, &req)
         // ...
@@ -135,9 +136,9 @@ Port: 8888
 
 Telemetry:
   Name: user-api
-  Endpoint: http://jaeger:14268/api/traces
+  Endpoint: jaeger:4317
   Sampler: 1.0  # Sample rate (0.0 - 1.0)
-  Batcher: jaeger  # jaeger, zipkin, otlp
+  Batcher: otlpgrpc  # zipkin, otlpgrpc, otlphttp, or file
 ```
 
 ### ✅ Correct Pattern: Context Propagation
@@ -147,17 +148,17 @@ Telemetry:
 func (l *GetUserLogic) GetUser(req *types.GetUserReq) (*types.GetUserResp, error) {
     // Context already contains trace info from HTTP middleware
     ctx := l.ctx
-    
+
     // Add custom span attributes
     span := trace.SpanFromContext(ctx)
     span.SetAttributes(
         attribute.String("user.id", strconv.FormatInt(req.UserID, 10)),
         attribute.String("user.action", "get"),
     )
-    
+
     // Add event for debugging
     span.AddEvent("cache_lookup_start")
-    
+
     // Check cache
     user, err := l.svcCtx.UserModel.FindOne(ctx, req.UserID)
     if err != nil {
@@ -165,9 +166,9 @@ func (l *GetUserLogic) GetUser(req *types.GetUserReq) (*types.GetUserResp, error
         span.SetStatus(codes.Error, err.Error())
         return nil, err
     }
-    
+
     span.AddEvent("cache_lookup_end")
-    
+
     return &types.GetUserResp{
         ID:    user.Id,
         Name:  user.Name,
@@ -182,7 +183,7 @@ func (l *GetUserLogic) GetUser(req *types.GetUserReq) (*types.GetUserResp, error
 // internal/logic/createorderlogic.go
 func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) error {
     ctx := l.ctx
-    
+
     // RPC call with tracing (automatic in go-zero)
     userResp, err := l.svcCtx.UserRpc.GetUser(ctx, &user.GetUserReq{
         UserId: req.UserID,
@@ -190,13 +191,13 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) error {
     if err != nil {
         return err
     }
-    
+
     // Another RPC call
-    inventoryResp, err := l.svcCtx.InventoryRpc.CheckStock(ctx, &inventory.CheckStockReq{
+    _, err = l.svcCtx.InventoryRpc.CheckStock(ctx, &inventory.CheckStockReq{
         ProductId: req.ProductID,
         Quantity:  req.Quantity,
     })
-    
+
     return err
 }
 ```
@@ -210,12 +211,12 @@ func (l *ProcessLogic) Process(req *types.ProcessReq) error {
     go func() {
         l.svcCtx.ExternalService.Call(context.Background(), data)
     }()
-    
+
     // ✅ Pass context
     go func(ctx context.Context) {
         l.svcCtx.ExternalService.Call(ctx, data)
     }(l.ctx)
-    
+
     return nil
 }
 
@@ -237,7 +238,7 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) error {
         logx.Field("product_id", req.ProductID),
         logx.Field("quantity", req.Quantity),
     )
-    
+
     orderID, err := l.createOrder(req)
     if err != nil {
         logx.WithContext(l.ctx).Errorw("failed to create order",
@@ -246,11 +247,11 @@ func (l *CreateOrderLogic) CreateOrder(req *types.CreateOrderReq) error {
         )
         return err
     }
-    
+
     logx.WithContext(l.ctx).Infow("order created successfully",
         logx.Field("order_id", orderID),
     )
-    
+
     return nil
 }
 ```
@@ -346,7 +347,7 @@ groups:
     rules:
       - alert: HighErrorRate
         expr: |
-          sum(rate(http_requests_total{status="error"}[5m])) 
+          sum(rate(http_requests_total{status="error"}[5m]))
           / sum(rate(http_requests_total[5m])) > 0.05
         for: 5m
         labels:
@@ -452,8 +453,8 @@ spec:
 ### ✅ Correct Pattern: Health Endpoint
 
 ```go
-// go-zero provides built-in health check
-// Access: GET /healthz
+// go-zero's development server provides /healthz for process readiness.
+// Use a separate application endpoint when readiness must include dependencies.
 
 // Custom health check
 func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -462,13 +463,13 @@ func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         httpx.ErrorCtx(r.Context(), w, errors.New("database unhealthy"))
         return
     }
-    
+
     // Check Redis
     if err := h.svcCtx.Redis.Ping(); err != nil {
         httpx.ErrorCtx(r.Context(), w, errors.New("redis unhealthy"))
         return
     }
-    
+
     httpx.OkJsonCtx(r.Context(), w, map[string]string{"status": "healthy"})
 }
 ```

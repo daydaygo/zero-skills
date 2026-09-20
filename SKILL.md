@@ -108,12 +108,9 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 **File**: [references/distributed-transactions.md](references/distributed-transactions.md)
 **When to load**: Cross-service data consistency, DTM integration, SAGA/TCC patterns
 **Contains**:
-- DTM integration with go-zero
-- SAGA pattern for long-running transactions
-- TCC pattern for financial operations
-- 2-Phase message for DB + cache consistency
-- Barrier pattern for idempotency
-- Configuration and error handling
+- Pattern-selection guidance for Workflow, Saga, TCC, XA, two-phase message, and outbox
+- Verified DTM HTTP Saga skeleton
+- Barrier, idempotency, compensation, security, and failure-testing checklists
 
 #### 7. Observability Patterns
 **File**: [references/observability.md](references/observability.md)
@@ -132,9 +129,8 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 **Contains**:
 - go-queue dq (Beanstalkd) for delayed tasks
 - go-queue kq (Kafka) for high-throughput messaging
-- Producer and consumer patterns
-- Delay queue and retry patterns
-- Configuration and error handling
+- Current producer and consumer APIs
+- Lifecycle, retry, idempotency, and shutdown guidance
 
 #### 9. Advanced Components
 **File**: [references/advanced-components.md](references/advanced-components.md)
@@ -171,7 +167,7 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 #### Case Study: go-zero-looklook
 **File**: [examples/case-studies/looklook-overview.md](examples/case-studies/looklook-overview.md)
 **When to load**: Learning from production-scale example, real-world architecture
-**Contains**: Large-scale microservice architecture, service breakdown, key patterns, deployment setup
+**Contains**: Source-grounded repository map, study workflow, reusable patterns, and verification checklist
 
 ## 🚀 Common Workflows
 
