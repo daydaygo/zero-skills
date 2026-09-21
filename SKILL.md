@@ -1,6 +1,6 @@
 ---
 name: zero-skills
-description: Use for building, reviewing, or troubleshooting go-zero services, including REST and RPC code generation, models, resilience, observability, distributed transactions, message queues, and core concurrency components. Trigger for goctl, .api or .proto files, or projects importing github.com/zeromicro/go-zero.
+description: Use when building, reviewing, or troubleshooting go-zero services, including REST and RPC code generation, middleware, service discovery, database models, collection data structures, resilience, observability, distributed transactions, and message queues. Trigger for goctl, .api or .proto files, or projects importing github.com/zeromicro/go-zero.
 version: 1.0.0
 license: MIT
 allowed-tools:
@@ -11,13 +11,14 @@ allowed-tools:
 
 # go-zero Skills for AI Agents
 
-This skill provides comprehensive go-zero microservices framework knowledge, optimized for AI agents helping developers build production-ready services. It covers REST APIs, RPC services, database operations, resilience patterns, and troubleshooting.
+This skill provides comprehensive go-zero microservices framework knowledge, optimized for AI agents helping developers build production-ready services. It covers REST APIs, RPC services, database operations, resilience patterns, high-performance data structures, and troubleshooting.
 
 ## 🎯 When to Use This Skill
 
 Invoke this skill when working with go-zero:
 - **Creating services**: REST APIs, gRPC services, or microservices architectures
 - **Database integration**: SQL, MongoDB, Redis, or connection pooling
+- **Data structures**: LRU Cache, Ring Buffer, TimingWheel, or concurrent maps
 - **Production hardening**: Circuit breakers, rate limiting, or error handling
 - **Debugging**: Understanding errors, fixing configuration, or resolving issues
 - **Learning**: Understanding go-zero patterns and best practices
@@ -72,7 +73,17 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 - Timeout and retry strategies
 - Graceful shutdown and degradation
 
-#### 5. goctl Command Reference
+#### 5. Collection Patterns
+**File**: [references/collection-patterns.md](references/collection-patterns.md)
+**When to load**: Using high-performance data structures, local caching, timeout management
+**Contains**:
+- LRU Cache for local hot data caching (O(1) operations)
+- Ring Buffer for fixed-size circular buffers
+- TimingWheel for efficient timer management (O(1) add/remove/execute)
+- SafeMap for concurrent-safe map operations
+- Memory management best practices and pitfalls
+
+#### 6. goctl Command Reference
 **File**: [references/goctl-commands.md](references/goctl-commands.md)
 **When to load**: Generating code with goctl, setting up new services, post-generation steps
 **Contains**:
@@ -84,7 +95,7 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 - Middleware and error handler templates
 - API spec patterns (CRUD, JWT, mixed auth)
 
-#### 6. Distributed Transaction Patterns
+#### 7. Distributed Transaction Patterns
 **File**: [references/distributed-transactions.md](references/distributed-transactions.md)
 **When to load**: Cross-service data consistency, DTM integration, SAGA/TCC patterns
 **Contains**:
@@ -92,7 +103,7 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 - Verified DTM HTTP Saga skeleton
 - Barrier, idempotency, compensation, security, and failure-testing checklists
 
-#### 7. Observability Patterns
+#### 8. Observability Patterns
 **File**: [references/observability.md](references/observability.md)
 **When to load**: Production monitoring, tracing, alerting setup
 **Contains**:
@@ -103,7 +114,7 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 - Grafana dashboards and alerting rules
 - ELK integration for log aggregation
 
-#### 8. Message Queue Patterns
+#### 9. Message Queue Patterns
 **File**: [references/message-queue.md](references/message-queue.md)
 **When to load**: Async processing, delayed tasks, event streaming
 **Contains**:
@@ -112,7 +123,7 @@ This skill organizes go-zero knowledge into focused modules. **Load specific gui
 - Current producer and consumer APIs
 - Lifecycle, retry, idempotency, and shutdown guidance
 
-#### 9. Advanced Components
+#### 10. Advanced Components
 **File**: [references/advanced-components.md](references/advanced-components.md)
 **When to load**: Performance optimization, concurrent processing, caching
 **Contains**:
@@ -202,6 +213,21 @@ These workflows guide you through typical go-zero development tasks:
 
 **Detailed guide**: [references/rpc-patterns.md](references/rpc-patterns.md#complete-rpc-workflow)
 
+### Using High-Performance Data Structures
+
+**Steps:**
+1. Choose appropriate data structure based on use case:
+   - LRU Cache for local hot data caching
+   - Ring Buffer for fixed-size log/message buffers
+   - TimingWheel for timeout/delayed task management
+   - SafeMap for concurrent-safe key-value storage
+2. Import from `github.com/zeromicro/go-zero/core/collection`
+3. Configure capacity/parameters based on memory constraints
+4. Handle eviction callbacks for resource cleanup (LRU Cache)
+5. Monitor memory usage and rebuild when necessary (SafeMap)
+
+**Detailed guide**: [references/collection-patterns.md](references/collection-patterns.md)
+
 ## ⚡ Key Principles
 
 When generating or reviewing go-zero code, always apply these principles:
@@ -244,10 +270,13 @@ Follow this path based on your needs:
 2. **Add resilience**: [references/resilience-patterns.md](references/resilience-patterns.md)
    Circuit breakers, rate limiting, graceful degradation
 
-3. **Check common pitfalls**: [troubleshooting/common-issues.md](troubleshooting/common-issues.md)
+3. **Optimize data structures**: [references/collection-patterns.md](references/collection-patterns.md)
+   LRU Cache, Ring Buffer, TimingWheel for performance
+
+4. **Check common pitfalls**: [troubleshooting/common-issues.md](troubleshooting/common-issues.md)
    Avoid typical mistakes and know how to debug issues
 
-4. **Set up observability**: [references/observability.md](references/observability.md)
+5. **Set up observability**: [references/observability.md](references/observability.md)
    Prometheus metrics, distributed tracing, structured logging
 
 ### 🔴 Advanced scenarios?
